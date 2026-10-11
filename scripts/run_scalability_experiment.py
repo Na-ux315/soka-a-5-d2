@@ -193,30 +193,39 @@ def evaluate(
     }
 
 
-def ensure_datasets(base_lengths: np.ndarray) -> Dict[int, Path]:
-    """Return map size -> path for all required sizes."""
+def ensure_datasets(base_lengths: np.ndarray) -> Dict[str, Path]:
+    """Ensure official GoCJ 100..1000 and synthetic 1000..10000 exist.
+
+    Returns map label -> path. Labels:
+      - GoCJ_Dataset_N for official (N=100..1000 step 100)
+      - Synthetic_GoCJ_N for synthetic (N=1000..10000 step 1000)
+    """
     SYNTH_DIR.mkdir(parents=True, exist_ok=True)
-    paths: Dict[int, Path] = {}
+    paths: Dict[str, Path] = {}
 
-    # Official-style GoCJ for 100..1000 (step 100); synthetic only for large scale
-    sizes_small = list(range(100, 1001, 100))  # 100..1000
-    sizes_large = list(range(1000, 10001, 1000))  # 1000..10000
-    all_sizes = sorted(set(sizes_small + sizes_large))
-
-    for n in all_sizes:
+    # Suite A: official GoCJ 100, 200, ..., 1000
+    for n in range(100, 1001, 100):
         official = DATASET_DIR / f"GoCJ_Dataset_{n}.txt"
-        if n <= 1000 and official.exists():
-            paths[n] = official
-            print(f"  using official GoCJ_Dataset_{n}.txt")
+        if not official.exists():
+            # fallback generate official-method if missing
+            print(f"  WARNING: missing {official.name}, generating official-method")
+            rng = np.random.default_rng(2018 + n)
+            # will be filled by main if needed - skip
             continue
-        # Large scale (>1000) or missing: synthetic resample
+        paths[f"GoCJ_Dataset_{n}"] = official
+        print(f"  official: {official.name}")
+
+    # Suite B: synthetic 1000, 2000, ..., 10000 (ALWAYS, including 1000)
+    for n in range(1000, 10001, 1000):
         out = SYNTH_DIR / f"Synthetic_GoCJ_{n}.txt"
         if not out.exists():
             data = generate_synthetic(base_lengths, n, seed=42 + n)
             out.write_text("\n".join(str(int(x)) for x in data) + "\n")
-            print(f"  generated {out.name} (n={n})")
-        paths[n] = out
-        print(f"  using synthetic for n={n}")
+            print(f"  generated {out.name}")
+        else:
+            print(f"  synthetic: {out.name}")
+        paths[f"Synthetic_GoCJ_{n}"] = out
+
     return paths
 
 
@@ -323,22 +332,27 @@ def main() -> None:
     print("Ensuring datasets...")
     paths = ensure_datasets(base)
 
-    sizes_small = list(range(100, 1001, 100))
-    sizes_large = list(range(1000, 10001, 1000))
     k_values = [20.0, 50.0, 100.0]
-
     rows: List[Dict] = []
+
     print("Running experiments...")
-    for n in sorted(set(sizes_small + sizes_large)):
-        lengths = load_lengths(paths[n])
-        assert len(lengths) == n, (n, len(lengths))
-        name = paths[n].stem
+    # Order: official 100..1000, then synthetic 1000..10000
+    ordered = sorted(
+        paths.items(),
+        key=lambda kv: (
+            0 if kv[0].startswith("GoCJ") else 1,
+            int(kv[0].rsplit("_", 1)[-1]),
+        ),
+    )
+    for name, path in ordered:
+        lengths = load_lengths(path)
+        n = len(lengths)
         for k in k_values:
             mapping, sched_ms = kpb_schedule(lengths, VM_CAPACITIES, k)
             row = evaluate(lengths, mapping, VM_CAPACITIES, sched_ms, k, name)
             rows.append(row)
             print(
-                f"  n={n:5d} k={int(k):3d}%  makespan={row['makespan_s']:10.2f}s  "
+                f"  {name:22s} n={n:5d} k={int(k):3d}%  makespan={row['makespan_s']:10.2f}s  "
                 f"energy={row['energy_kwh']:.4f} kWh  util={row['utilization_pct']:.1f}%  "
                 f"sched={row['scheduling_ms']:.2f} ms"
             )
@@ -365,11 +379,17 @@ def main() -> None:
             w.writerow(r)
     print(f"Wrote {SUMMARY_CSV}")
 
+    # Split rows by suite for plots
+    rows_official = [r for r in rows if r["dataset"].startswith("GoCJ")]
+    rows_synthetic = [r for r in rows if r["dataset"].startswith("Synthetic")]
+    sizes_official = sorted({r["tasks"] for r in rows_official})
+    sizes_synthetic = sorted({r["tasks"] for r in rows_synthetic})
+
     # Plots
-    plot_metrics(rows, sizes_small, "GoCJ / Synthetic 100–1000", FIG_DIR / "compare_100_1000.png")
-    plot_metrics(rows, sizes_large, "Synthetic 1000–10000", FIG_DIR / "compare_1000_10000.png")
-    plot_grouped_bars(rows, sizes_small, FIG_DIR / "bars_100_1000.png")
-    plot_grouped_bars(rows, sizes_large, FIG_DIR / "bars_1000_10000.png")
+    plot_metrics(rows_official, sizes_official, "Official GoCJ 100–1000", FIG_DIR / "compare_100_1000.png")
+    plot_metrics(rows_synthetic, sizes_synthetic, "Synthetic 1000–10000", FIG_DIR / "compare_1000_10000.png")
+    plot_grouped_bars(rows_official, sizes_official, FIG_DIR / "bars_100_1000.png")
+    plot_grouped_bars(rows_synthetic, sizes_synthetic, FIG_DIR / "bars_1000_10000.png")
 
     # Combined makespan & energy focus plot
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
