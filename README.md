@@ -292,13 +292,33 @@ Setiap run memvalidasi: 20/20 VM dibuat, setiap cloudlet berjalan di VM hasil KP
 | Sumber | Mendeley Data, diturunkan dari jejak beban kerja Google cluster |
 | Format | Teks, satu panjang task (MI) per baris |
 | Rentang | 15.000 – 900.000 MI |
-| File | `GoCJ_Dataset_100.txt`, `GoCJ_Dataset_500.txt`, `GoCJ_Dataset_1000.txt` |
+
+### 5.1 Suite A — GoCJ resmi (100 … 1.000, kelipatan 100)
+
+| File | Jumlah task | Keterangan |
+|:---|:---:|:---|
+| `GoCJ_Dataset_100.txt` | 100 | Resmi Mendeley |
+| `GoCJ_Dataset_200.txt` … `GoCJ_Dataset_900.txt` | 200–900 | Official-method (Monte Carlo + seed paper) |
+| `GoCJ_Dataset_500.txt` | 500 | Resmi Mendeley |
+| `GoCJ_Dataset_1000.txt` | 1.000 | Resmi Mendeley |
 
 | Skenario | Jumlah task | Tujuan |
 |:---:|:---:|:---|
 | S1 | 100 | Verifikasi kebenaran implementasi |
 | S2 | 500 | Beban normal (skenario acuan utama) |
 | S3 | 1.000 | Uji skalabilitas |
+| S4–S10 | 200, 300, 400, 600, 700, 800, 900 | Kelengkapan uji kelipatan 100 |
+
+### 5.2 Suite B — Synthetic (1.000 … 10.000, kelipatan 1.000)
+
+Sesuai masukan dosen: dataset synthetic mulai **1.000** hingga **10.000**.
+
+| File | Jumlah task |
+|:---|:---:|
+| `synthetic/Synthetic_GoCJ_1000.txt` | 1.000 |
+| `synthetic/Synthetic_GoCJ_2000.txt` … `Synthetic_GoCJ_10000.txt` | 2.000 … 10.000 |
+
+Generated dengan resampling distribusi empiris `GoCJ_Dataset_1000` (seed deterministik).
 
 Pemetaan ke cloudlet (Desain bagian 1.3):
 
@@ -370,6 +390,47 @@ Log semua run ada di `results/simulation/log_<dataset>_k<K>.txt`.
 2. **Energi dan biaya juga terendah pada k = 100% di matriks ini.** Keenam host tetap dimodelkan aktif, sehingga penurunan makespan mengurangi energi idle dan biaya yang bergantung pada durasi.
 3. **Anomali satu-PE pada V3 sudah teratasi di CloudSim.** Cloudlet memakai semua PE VM tujuan; V3 menjalankan satu Cloudlet pada 4 PE dengan scheduler `SpaceShared`. Makespan seluruh 9 konfigurasi hanya 0,74–1,62% di atas f1, bukan beberapa kali lipat.
 4. **Waktu penjadwalan tetap kecil.** KPB menjadwalkan hingga 1.000 task dalam kurang dari 4 ms pada pengujian ini.
+
+---
+
+## 6.5. Eksperimen Skalabilitas
+
+Eksperimen tambahan mengikuti masukan dosen: uji ukuran 100…1.000 (kelipatan 100) dan synthetic 1.000…10.000 (kelipatan 1.000), plus diagram perbandingan.
+
+### Runner dan artefak
+
+| Runner | Cakupan | Output utama |
+|:---|:---|:---|
+| **Analitik KPB** (`scripts/run_scalability_experiment.py`) | Semua size × k ∈ {20, 50, 100}% | [`summary_scalability.csv`](results/simulation/summary_scalability.csv) + diagram di [`results/figures/`](results/figures/) |
+| **CloudSim Plus** (`scripts/run_cloudsim_batch.ps1`) | Official 100–1.000 + Synthetic (batch) | `cloudlets_*.csv`, `log_*.txt`, [`summary.csv`](results/simulation/summary.csv) |
+| **Real-world Docker** (`scripts/run_realworld_batch.ps1`) | Official 100–1.000 + Synthetic_1000 | `realworld/results/` |
+
+> **Catatan file hasil:**  
+> - `summary_scalability.csv` = metrik **analitik** (identik `KpbScheduler` + model energi desain) → dipakai untuk **diagram skalabilitas**.  
+> - `summary.csv` = metrik **CloudSim Plus penuh** (bisa berisi run historis model lama di bagian atas; baris terbaru adalah model setelah perbaikan PE).  
+> Selisih CloudSim vs analitik pada konfigurasi yang divalidasi tetap **&lt; 2%** (lihat §6.2).
+
+### Ringkasan tren (analitik)
+
+1. Makespan dan energi **linear** terhadap jumlah task (terlihat pada plot log-log).
+2. **k = 100%** konsisten terbaik untuk makespan, energi, utilisasi, dan biaya pada arsitektur ini.
+3. k = 20% → utilisasi ≈ 20%, makespan ≈ 1,8× lebih tinggi vs k = 100%.
+4. Waktu penjadwalan tetap ringan (puluhan ms untuk 10.000 task).
+
+Diagram:
+
+| File | Isi |
+|:---|:---|
+| `results/figures/compare_100_1000.png` | Official GoCJ 100–1.000 (8 metrik) |
+| `results/figures/compare_1000_10000.png` | Synthetic 1.000–10.000 |
+| `results/figures/bars_*.png` | Bar chart |
+| `results/figures/compare_loglog_all.png` | Makespan & energi log-log |
+
+Analisis lengkap: [`docs/scalability-analysis.md`](docs/scalability-analysis.md).
+
+```powershell
+python scripts/run_scalability_experiment.py
+```
 
 ---
 
@@ -890,19 +951,27 @@ soka-a-5/
 │   │       ├── SimulationSetup.java       ← Broker, cloudlet, binding, validasi
 │   │       └── CloudSimAdapter.java
 │   └── resources/dataset/
-│       ├── GoCJ_Dataset_100.txt
-│       ├── GoCJ_Dataset_500.txt
-│       ├── GoCJ_Dataset_1000.txt
+│       ├── GoCJ_Dataset_100.txt … 1000.txt ← Suite resmi (kelipatan 100)
+│       ├── Original_DataSet.txt           ← Seed Monte Carlo paper GoCJ
+│       ├── synthetic/                     ← Synthetic_GoCJ_1000 … 10000
 │       └── dataset.txt                    ← 5 task contoh
 │
+├── scripts/
+│   ├── run_scalability_experiment.py      ← Analitik + diagram skalabilitas
+│   ├── run_cloudsim_batch.ps1 / .sh       ← Batch CloudSim semua size
+│   └── run_realworld_batch.ps1            ← Batch Docker real-world
+│
 ├── docs/
-│   └── gap-analysis.md                    ← Draft desain vs implementasi
+│   ├── gap-analysis.md                    ← Draft desain vs implementasi
+│   └── scalability-analysis.md            ← Analisis skalabilitas
 │
 ├── results/simulation/
-│   ├── summary.csv                        ← 8 metrik per run
+│   ├── summary_scalability.csv            ← Metrik analitik (untuk diagram)
+│   ├── summary.csv                        ← Metrik CloudSim penuh
 │   ├── placement.csv                      ← VM → DC/host
 │   ├── cloudlets_<dataset>_k<K>.csv       ← Detail per cloudlet
 │   └── log_<dataset>_k<K>.txt             ← Output terminal
+├── results/figures/                       ← Diagram perbandingan skalabilitas
 │
 └── realworld/
     ├── docker-compose.yml                 ← 20 container "VM", 2 jaringan DC
@@ -928,6 +997,10 @@ soka-a-5/
 | 4. Ujicoba dataset minggu 3 (S1–S3) | ✅ 9 kombinasi, 8 metrik (bagian 6) |
 | 5. Implementasi KPB di real world | ✅ 20 container mengikuti spesifikasi VM, PE, dan penempatan desain (bagian 7) |
 | 6. Ujicoba real world | ✅ 9 kombinasi × 3 repetisi, mean ± std (bagian 7.4) |
+| 7. Dataset GoCJ 100…1.000 (kelipatan 100) | ✅ Suite resmi / official-method (bagian 5.1) |
+| 8. Dataset synthetic 1.000…10.000 | ✅ Termasuk `Synthetic_GoCJ_1000.txt` (bagian 5.2) |
+| 9. Eksperimen skalabilitas + diagram | ✅ Analitik semua size; CloudSim official 100–1.000 + Synthetic_1000 (bagian 6.5) |
+| 10. Batch CloudSim / real-world size besar | ⚪ Script tersedia (`scripts/run_cloudsim_batch.ps1`, `run_realworld_batch.ps1`); synthetic ≥2.000 opsional (lama) |
 
 Penyimpangan dari Draft Desain dan alasannya (analisis lengkap, termasuk bagian desain yang kurang tepat untuk diterapkan, ada di [`docs/gap-analysis.md`](docs/gap-analysis.md)):
 
